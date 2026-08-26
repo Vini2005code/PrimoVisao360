@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Primordial DATA · Visão 360</title>
+    <link rel="stylesheet" href="/static/primordial-data/css/primordial-data.css?v=20260811-1">
+  </head>
+  <body class="{{ 'is-embedded' if embedded else '' }}">
+    <a class="skip-link" href="#conteudo-principal">Ir para o conteúdo</a>
+
+    <header class="app-bar">
+      <div class="app-bar__inner">
+        <div class="brand" aria-label="Primordial DATA">
+          <span class="brand__mark" aria-hidden="true">P</span>
+          <span>
+            <strong>Primordial DATA</strong>
+            <small>Inteligência clínica integrada</small>
+          </span>
+        </div>
+        <span class="security-chip">
+          <span aria-hidden="true">✓</span>
+          Contexto protegido
+        </span>
+      </div>
+    </header>
+
+    <main id="conteudo-principal" class="page-shell">
+      <section class="page-intro" aria-labelledby="page-title">
+        <span class="eyebrow">✦ Visão 360</span>
+        <h1 id="page-title">Converse com os dados clínicos do prontuário</h1>
+        <p>
+          Consulte informações registradas, visualize evoluções e fixe os
+          conteúdos mais importantes para a equipe da clínica.
+        </p>
+      </section>
+
+      <section class="feature" aria-label="Primordial DATA">
+        <header class="feature-heading card">
+          <span class="feature-heading__mark" aria-hidden="true">✦</span>
+          <span class="feature-heading__copy">
+            <strong>Primordial DATA</strong>
+            <small>Inteligência clínica descritiva aplicada ao prontuário atual.</small>
+          </span>
+          <span class="clinic-chip">
+            <span aria-hidden="true">✓</span>
+            Ambiente da clínica
+          </span>
+        </header>
+
+        <div id="context-notice" class="context-notice" hidden role="status">
+          Aguardando o contexto seguro do prontuário. Nenhum dado clínico foi enviado.
+        </div>
+
+        <div class="tabs" data-tabs>
+          <div class="tab-list" role="tablist" aria-label="Áreas do Primordial DATA">
+            <button
+              id="tab-chat"
+              class="tab-button is-active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              aria-controls="panel-chat"
+              data-tab="chat"
+            >
+              <span aria-hidden="true">●</span>
+              Chat
+            </button>
+            <button
+              id="tab-saved"
+              class="tab-button"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="panel-saved"
+              data-tab="saved"
+              tabindex="-1"
+            >
+              <span aria-hidden="true">◆</span>
+              Salvamentos
+              <span id="saved-count" class="count-badge" hidden>0</span>
+            </button>
+          </div>
+
+          <section
+            id="panel-chat"
+            class="tab-panel"
+            role="tabpanel"
+            aria-labelledby="tab-chat"
+          >
+            <article class="chat-card card">
+              <header class="chat-card__heading">
+                <span class="assistant-symbol" aria-hidden="true">AI</span>
+                <span>
+                  <strong>Assistente clínico</strong>
+                  <small>
+                    Consulte os registros disponíveis e solicite visualizações.
+                    As respostas são informativas e não indicam diagnóstico ou conduta.
+                  </small>
+                </span>
+              </header>
+
+              <div
+                id="message-list"
+                class="message-list"
+                aria-live="polite"
+                aria-busy="true"
+              ></div>
+
+              <footer class="composer">
+                <form id="chat-form" novalidate>
+                  <label class="sr-only" for="chat-message">
+                    Pergunta para o assistente clínico
+                  </label>
+                  <textarea
+                    id="chat-message"
+                    name="message"
+                    rows="3"
+                    maxlength="4000"
+                    placeholder="Pergunte sobre os registros deste paciente ou solicite um gráfico..."
+                  ></textarea>
+                  <div class="composer__footer">
+                    <span id="character-count">Ctrl + Enter para enviar · 0/4000</span>
+                    <button id="send-button" class="button button--primary" type="submit">
+                      <span aria-hidden="true">→</span>
+                      Enviar pergunta
+                    </button>
+                  </div>
+                </form>
+              </footer>
+            </article>
+          </section>
+
+          <section
+            id="panel-saved"
+            class="tab-panel"
+            role="tabpanel"
+            aria-labelledby="tab-saved"
+            hidden
+          >
+            <div id="saved-list" class="saved-grid" aria-live="polite"></div>
+          </section>
+        </div>
+
+        <aside class="safety-note">
+          <span class="safety-note__mark" aria-hidden="true">✓</span>
+          <p>
+            O contexto é limitado ao paciente e à clínica autenticada. O conteúdo é
+            descritivo, permanece sujeito à revisão médica e não substitui a decisão
+            profissional.
+          </p>
+        </aside>
+      </section>
+    </main>
+
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+
+    <script src="/static/primordial-data/vendor/chart.umd.min.js" defer></script>
+    <script type="module" src="/static/primordial-data/js/primordial-data.js?v=20260811-1"></script>
+  </body>
+</html>
