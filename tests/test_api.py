@@ -12,6 +12,7 @@ os.environ["APP_ENV"] = "test"
 os.environ["ENABLE_DOCS"] = "true"
 os.environ["CORS_ALLOWED_ORIGINS"] = ""
 os.environ["DATABASE_ENABLED"] = "false"
+os.environ["VOICE_ENABLED"] = "false"
 
 import httpx  # noqa: E402
 
@@ -23,10 +24,11 @@ from app.chat.repository import validate_read_only_sql  # noqa: E402
 from app.chat.schemas import ChatAnswer  # noqa: E402
 from app.chat.service import classify_question  # noqa: E402
 from app.main import app  # noqa: E402
-from app.schemas import Visao360Saida  # noqa: E402
+from app.schemas import ChatDinamicoSaida, Visao360Saida  # noqa: E402
 from app.core.config import Settings  # noqa: E402
 from app.schemas import Visao360Entrada  # noqa: E402
 from app.services.groq_service import (  # noqa: E402
+    ChatGeneration,
     GroqVisionService,
     TokenUsage,
     VisionGeneration,
@@ -69,6 +71,27 @@ VALID_PAYLOAD = {
     ],
 }
 
+VALID_CHAT_PAYLOAD = {
+    "clinic_id": VALID_PAYLOAD["clinic_id"],
+    "lgpd_nivel": "pseudonimizado",
+    "pergunta": "Qual é a situação clínica de PACIENTE_12345678-1234-4234-8234-123456789012?",
+    "contexto_clinico": {
+        "paciente": VALID_PAYLOAD["paciente"],
+        "exames": VALID_PAYLOAD["exames"],
+        "sinais_vitais": VALID_PAYLOAD["sinais_vitais"],
+        "alergias": VALID_PAYLOAD["alergias"],
+        "evolucoes": VALID_PAYLOAD["evolucoes"],
+        "insights_persistidos": [
+            {
+                "gerado_em": "2026-08-27T13:40:00Z",
+                "resumo_executivo": "PACIENTE_12345678-1234-4234-8234-123456789012 está em acompanhamento.",
+                "alertas_criticos": [],
+                "tendencias": [],
+            }
+        ],
+    },
+}
+
 
 class FakeVisionService:
     async def generate(self, payload):  # noqa: ANN001
@@ -85,6 +108,24 @@ class FakeVisionService:
                 total_tokens=408,
             ),
             provider_latency_ms=125,
+            model="openai/gpt-oss-20b",
+        )
+
+    async def generate_chat(self, payload):  # noqa: ANN001
+        return ChatGeneration(
+            resposta=ChatDinamicoSaida(
+                resposta=(
+                    "O contexto registra acompanhamento clínico para "
+                    "PACIENTE_12345678-1234-4234-8234-123456789012."
+                ),
+                status_processamento="sucesso",
+            ),
+            usage=TokenUsage(
+                prompt_tokens=410,
+                completion_tokens=90,
+                total_tokens=500,
+            ),
+            provider_latency_ms=140,
             model="openai/gpt-oss-20b",
         )
 
@@ -113,12 +154,19 @@ class FakeGroqCompletions:
 
     async def create(self, **kwargs):  # noqa: ANN003, ANN201
         self.arguments = kwargs
-        content = Visao360Saida(
-            resumo_executivo="Resumo estritamente clínico.",
-            alertas_criticos=[],
-            tendencias=[],
-            status_processamento="sucesso",
-        ).model_dump_json()
+        schema_name = kwargs["response_format"]["json_schema"]["name"]
+        if schema_name == "primordial_chat_dinamico":
+            content = ChatDinamicoSaida(
+                resposta="Resposta estritamente baseada no contexto.",
+                status_processamento="sucesso",
+            ).model_dump_json()
+        else:
+            content = Visao360Saida(
+                resumo_executivo="Resumo estritamente clínico.",
+                alertas_criticos=[],
+                tendencias=[],
+                status_processamento="sucesso",
+            ).model_dump_json()
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
             usage=SimpleNamespace(
@@ -425,24 +473,34 @@ class VisionApiTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_chat_retorna_contrato_do_banco(self) -> None:
+    async def test_chat_legado_direto_ao_banco_foi_desativado(self) -> None:
         response = await self.client.post(
             "/chat",
             json={"pergunta": "Quantos pacientes existem?"},
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.json(),
-            {
-                "pergunta": "Quantos pacientes existem?",
-                "resposta": {
-                    "tipo": "total_pacientes",
-                    "mensagem": "Existem 70 pacientes cadastrados.",
-                    "dados": [{"total_pacientes": 70}],
-                    "sugestoes": [],
-                },
-            },
+        self.assertEqual(response.status_code, 404)
+
+    async def test_chat_dinamico_aceita_somente_contexto_pseudonimizado(self) -> None:
+        response = await self.client.post(
+            "/ai/chat-dinamico",
+            json=VALID_CHAT_PAYLOAD,
+            headers={"X-Internal-API-Key": os.environ["INTERNAL_API_KEY"]},
         )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status_processamento"], "sucesso")
+        self.assertEqual(response.headers["X-Groq-Total-Tokens"], "500")
+
+        payload_com_pii = {
+            **VALID_CHAT_PAYLOAD,
+            "pergunta": "Consulte joao.identificavel@example.com",
+        }
+        rejeitada = await self.client.post(
+            "/ai/chat-dinamico",
+            json=payload_com_pii,
+            headers={"X-Internal-API-Key": os.environ["INTERNAL_API_KEY"]},
+        )
+        self.assertEqual(rejeitada.status_code, 422)
+        self.assertNotIn("joao.identificavel@example.com", rejeitada.text)
 
     async def test_raiz_abre_a_interface_sem_404(self) -> None:
         response = await self.client.get("/")
@@ -507,6 +565,36 @@ class VisionApiTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(arguments)
         user_content = arguments["messages"][1]["content"]
         self.assertNotIn(VALID_PAYLOAD["clinic_id"], user_content)
+        self.assertNotIn("lgpd_nivel", user_content)
+        self.assertTrue(arguments["response_format"]["json_schema"]["strict"])
+        self.assertEqual(result.usage.total_tokens, 140)
+
+    async def test_chat_nao_envia_tenant_ao_groq_e_usa_schema_estrito(self) -> None:
+        settings = Settings(
+            app_env="test",
+            cors_allowed_origins=(),
+            docs_enabled=True,
+            groq_api_key=os.environ["GROQ_API_KEY"],
+            groq_max_completion_tokens=1200,
+            groq_max_retries=0,
+            groq_model="openai/gpt-oss-20b",
+            groq_timeout_seconds=5,
+            internal_api_key=os.environ["INTERNAL_API_KEY"],
+            log_level="INFO",
+        )
+        service = object.__new__(GroqVisionService)
+        service._settings = settings
+        service._client = FakeGroqClient()
+
+        from app.schemas import ChatDinamicoEntrada
+
+        result = await service.generate_chat(
+            ChatDinamicoEntrada.model_validate(VALID_CHAT_PAYLOAD)
+        )
+        arguments = service._client.completions.arguments
+        self.assertIsNotNone(arguments)
+        user_content = arguments["messages"][1]["content"]
+        self.assertNotIn(VALID_CHAT_PAYLOAD["clinic_id"], user_content)
         self.assertNotIn("lgpd_nivel", user_content)
         self.assertTrue(arguments["response_format"]["json_schema"]["strict"])
         self.assertEqual(result.usage.total_tokens, 140)

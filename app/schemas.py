@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated, Literal, TypeAlias
 from uuid import UUID
 
@@ -114,6 +114,11 @@ _PADROES_PII: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
 )
+_TOKEN_PACIENTE_PSEUDONIMIZADO = re.compile(
+    r"\bPACIENTE_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
+    re.IGNORECASE,
+)
 
 
 def _normalizar_chave(chave: str) -> str:
@@ -140,8 +145,12 @@ def _rejeitar_chaves_pii(valor: object) -> None:
 
 def _rejeitar_padroes_pii(valor: object) -> None:
     if isinstance(valor, str):
+        conteudo_validado = _TOKEN_PACIENTE_PSEUDONIMIZADO.sub(
+            "[TOKEN_PACIENTE]",
+            valor,
+        )
         for categoria, padrao in _PADROES_PII:
-            if padrao.search(valor):
+            if padrao.search(conteudo_validado):
                 raise ValueError(
                     f"LGPD: conteúdo com padrão de {categoria} não é permitido"
                 )
@@ -161,6 +170,17 @@ def _validar_data_iso(valor: str) -> str:
 
     if data.isoformat() != valor:
         raise ValueError("deve usar o formato canônico AAAA-MM-DD")
+    return valor
+
+
+def _validar_data_hora_iso(valor: str) -> str:
+    try:
+        normalizado = valor[:-1] + "+00:00" if valor.endswith("Z") else valor
+        data_hora = datetime.fromisoformat(normalizado)
+    except ValueError as exc:
+        raise ValueError("deve ser uma data e hora ISO-8601 válida") from exc
+    if data_hora.tzinfo is None:
+        raise ValueError("deve incluir fuso horário")
     return valor
 
 
@@ -196,6 +216,11 @@ DataISO: TypeAlias = Annotated[
     str,
     StringConstraints(pattern=r"^\d{4}-\d{2}-\d{2}$"),
     AfterValidator(_validar_data_iso),
+]
+DataHoraISO: TypeAlias = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=20, max_length=40),
+    AfterValidator(_validar_data_hora_iso),
 ]
 UUIDDeJSON: TypeAlias = Annotated[UUID, Field(strict=False)]
 
@@ -302,4 +327,51 @@ class Visao360Saida(SchemaSemPII):
     ]
     alertas_criticos: Annotated[list[TextoInsight], Field(max_length=50)]
     tendencias: Annotated[list[TextoInsight], Field(max_length=50)]
+    status_processamento: Literal["sucesso"]
+
+
+class InsightPersistidoChatEntrada(SchemaSemPII):
+    gerado_em: DataHoraISO
+    resumo_executivo: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=4_000),
+    ]
+    alertas_criticos: Annotated[list[TextoInsight], Field(max_length=50)]
+    tendencias: Annotated[list[TextoInsight], Field(max_length=50)]
+
+
+class ContextoClinicoChatEntrada(SchemaSemPII):
+    paciente: PacienteClinicoEntrada
+    exames: Annotated[list[ExameEntrada], Field(max_length=100)]
+    sinais_vitais: Annotated[list[SinalVitalEntrada], Field(max_length=1_000)]
+    alergias: Annotated[list[AlergiaEntrada], Field(max_length=500)]
+    evolucoes: Annotated[list[EvolucaoEntrada], Field(max_length=2_000)]
+    insights_persistidos: Annotated[
+        list[InsightPersistidoChatEntrada],
+        Field(max_length=500),
+    ]
+
+
+class ChatDinamicoEntrada(SchemaSemPII):
+    clinic_id: UUIDDeJSON
+    lgpd_nivel: Literal["pseudonimizado"]
+    pergunta: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=3, max_length=1_000),
+    ]
+    contexto_clinico: ContextoClinicoChatEntrada
+
+    @field_validator("clinic_id")
+    @classmethod
+    def clinic_id_nao_pode_ser_nulo(cls, valor: UUID) -> UUID:
+        if valor.int == 0:
+            raise ValueError("clinic_id não pode ser o UUID nulo")
+        return valor
+
+
+class ChatDinamicoSaida(SchemaSemPII):
+    resposta: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=8_000),
+    ]
     status_processamento: Literal["sucesso"]

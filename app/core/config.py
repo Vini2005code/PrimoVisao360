@@ -6,7 +6,14 @@ import os
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
+
+from dotenv import load_dotenv
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(dotenv_path=_PROJECT_ROOT / ".env", override=False)
 
 
 _MODELOS_COM_SAIDA_ESTRITA = frozenset(

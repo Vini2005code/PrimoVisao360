@@ -1,8 +1,8 @@
 # Primordial Inteligência 360
 
-Aplicação interna com FastAPI, PostgreSQL e uma interface HTML/CSS/JavaScript.
-O chat não gera SQL e não usa dados mockados: cada pergunta suportada é
-mapeada para uma consulta `SELECT` previamente cadastrada no backend.
+Aplicação interna com gateway Java, FastAPI e PostgreSQL. O chat clínico é
+orquestrado pelo gateway Java: o FastAPI recebe somente a pergunta e o contexto
+autorizado já pseudonimizados e nunca consulta o banco para responder ao chat.
 
 ## Configuração
 
@@ -58,59 +58,34 @@ Resposta esperada:
 {"status":"ready","database":"read_only"}
 ```
 
-## Testar o chat
+## Testar o chat dinâmico pelo gateway Java
 
 ```powershell
-$body = @{ pergunta = "Quantos pacientes existem?" } | ConvertTo-Json
+$clinicId = "11111111-1111-4111-8111-111111111111"
+$pacienteId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+$body = @{ pergunta = "Qual é a situação clínica registrada?" } | ConvertTo-Json
 Invoke-RestMethod `
-  -Uri http://127.0.0.1:8000/chat `
+  -Uri "http://127.0.0.1:8080/api/v1/visao360/pacientes/$pacienteId/chat" `
   -Method Post `
+  -Headers @{ "X-Clinic-ID" = $clinicId } `
   -ContentType "application/json" `
   -Body $body
 ```
 
-No banco de teste atual, a resposta confirmada é:
+A rota legada `POST /chat` do FastAPI está desativada. O endpoint interno
+`POST /ai/chat-dinamico` exige `X-Internal-API-Key` e deve ser chamado
+somente pelo gateway Java.
 
-```json
-{
-  "pergunta": "Quantos pacientes existem?",
-  "resposta": {
-    "tipo": "total_pacientes",
-    "mensagem": "Existem 70 pacientes cadastrados.",
-    "dados": [{"total_pacientes": 70}],
-    "sugestoes": []
-  }
-}
-```
+## Proteções do chat
 
-Perguntas cadastradas:
-
-- Quantos pacientes existem?
-- Quais pacientes têm doenças raras?
-- Quais pacientes têm diabetes e usam insulina?
-- Quais medicamentos estão em uso?
-- Quais pacientes usam suplementos?
-- Quais pacientes têm maior risco cardiometabólico?
-
-Perguntas não cadastradas retornam `nao_entendido` e uma lista de sugestões.
-Nenhum texto do usuário é concatenado ao SQL.
-
-## Proteções do banco
-
-- Pool assíncrono com `asyncpg`.
-- Sessão e transação `read_only`.
-- `search_path` definido pelo `DB_SCHEMA` validado.
-- Somente consultas iniciadas por `SELECT` ou `WITH`.
-- Bloqueio de `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `TRUNCATE`,
-  `CREATE`, `GRANT` e `REVOKE`.
-- Bloqueio de múltiplas instruções e comentários SQL.
-- Consultas fixas no backend e limite máximo de 100 registros.
-- Respostas e perguntas clínicas não são registradas nos logs.
-
-Em desenvolvimento, `POST /chat` sem chave é aceito somente quando a conexão
-HTTP vem do próprio computador (`127.0.0.1` ou `::1`). Em produção, o Backend
-Java deve chamar ou publicar essa rota usando `X-Internal-API-Key`, autenticação
-da clínica, RLS e auditoria.
+- autenticação e tenant resolvidos no gateway Java;
+- leitura do prontuário e dos insights sob RLS;
+- pseudonimização da pergunta, evoluções e insights antes da chamada HTTP;
+- exclusão de `clinic_id` e `lgpd_nivel` antes da fronteira do Groq;
+- validação Pydantic Fail Fast de chaves e padrões de PII;
+- resposta estruturada e validada antes da reidentificação;
+- nenhuma geração de SQL pelo modelo;
+- perguntas e conteúdo clínico não são registrados nos logs.
 
 ## Conversa por voz efêmera
 

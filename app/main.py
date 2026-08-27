@@ -15,7 +15,6 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router as vision_router
-from app.chat.routes import router as chat_router
 from app.chat.repository import ClinicalChatRepository
 from app.chat.service import ClinicalChatService
 from app.core.config import Settings, get_settings
@@ -168,7 +167,6 @@ def create_app() -> FastAPI:
         name="primordial-data-static",
     )
     app.include_router(web_router)
-    app.include_router(chat_router)
     app.include_router(voice_router)
     app.include_router(vision_router)
     return app
