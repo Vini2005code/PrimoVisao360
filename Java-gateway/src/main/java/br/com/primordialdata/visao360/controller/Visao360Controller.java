@@ -56,4 +56,13 @@ public class Visao360Controller {
                 orquestrador.responderChat(pacienteId, request.pergunta())
         );
     }
+
+    @PostMapping("/chat/populacional")
+    public ResponseEntity<ChatDinamicoResponse> responderChatPopulacional(
+            @Valid @RequestBody ChatDinamicoRequest request
+    ) {
+        return ResponseEntity.ok(
+                orquestrador.responderChatPopulacional(request.pergunta())
+        );
+    }
 }

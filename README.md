@@ -11,11 +11,14 @@ seu ambiente:
 
 ```env
 APP_ENV=development
-DATABASE_ENABLED=true
+SPRING_PROFILES_ACTIVE=mvp
+DATABASE_ENABLED=false
 DATABASE_URL=postgresql://postgres:SUA_SENHA@localhost:5432/Primordial_Interno
 DB_SCHEMA=ehr_teste
 INTERNAL_API_KEY=substitua-por-um-segredo-com-32-caracteres
 GROQ_API_KEY=gsk_substitua_por_um_segredo_real
+VOICE_ENABLED=true
+VOICE_MOCK_ENABLED=true
 ```
 
 O `DATABASE_URL` nunca deve ser colocado no frontend ou versionado. O `.env`
@@ -43,31 +46,31 @@ Acesse:
 - Swagger: `http://127.0.0.1:8000/docs`
 - Readiness: `http://127.0.0.1:8000/ready`
 
-O inicializador Python sobe Vite e FastAPI no mesmo terminal e encerra ambos
-com o mesmo `Ctrl+C`. Use `--no-frontend` para iniciar somente o backend.
+O inicializador Python sobe Java, Vite e FastAPI no mesmo terminal e encerra os
+três com o mesmo `Ctrl+C`. Use `--no-java` ou `--no-frontend` para omitir uma
+camada durante o desenvolvimento.
 
-## Testar o banco
+## Testar os serviços
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8000/ready
+Invoke-RestMethod http://127.0.0.1:8080/actuator/health
+Invoke-RestMethod http://127.0.0.1:8000/health
 ```
 
 Resposta esperada:
 
 ```json
-{"status":"ready","database":"read_only"}
+{"status":"UP"}
 ```
 
 ## Testar o chat dinâmico pelo gateway Java
 
 ```powershell
-$clinicId = "11111111-1111-4111-8111-111111111111"
 $pacienteId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 $body = @{ pergunta = "Qual é a situação clínica registrada?" } | ConvertTo-Json
 Invoke-RestMethod `
   -Uri "http://127.0.0.1:8080/api/v1/visao360/pacientes/$pacienteId/chat" `
   -Method Post `
-  -Headers @{ "X-Clinic-ID" = $clinicId } `
   -ContentType "application/json" `
   -Body $body
 ```
@@ -87,42 +90,27 @@ somente pelo gateway Java.
 - nenhuma geração de SQL pelo modelo;
 - perguntas e conteúdo clínico não são registrados nos logs.
 
-## Conversa por voz efêmera
+## Conversa por voz no MVP
 
-O React captura `WebM/Opus` com `MediaRecorder` e envia fragmentos binários
-por `WebSocket` para `/voice/ws`. O FastAPI executa, nesta ordem:
-
-1. decodificação PyAV e STT local em memória com faster-whisper/CTranslate2;
-2. busca somente leitura no PostgreSQL;
-3. pseudonimização reversível e efêmera do texto e do resultado;
-4. verbalização factual com JSON estrito na Groq;
-5. reidentificação dentro do serviço e TTS local em português com Piper;
-6. retorno do WAV em fragmentos binários e limpeza dos buffers mutáveis.
-
-O áudio bruto nunca é enviado à Groq. Somente a pergunta e os resultados já
-pseudonimizados chegam ao LLM textual. Para ativar o recurso:
+O React continua usando `MediaRecorder` e `/voice/ws`, mas o perfil MVP ignora
+o conteúdo do áudio e devolve uma transcrição e um WAV silencioso gerados em
+memória. Nenhum modelo é carregado e nenhum áudio é persistido ou enviado.
 
 ```env
 VOICE_ENABLED=true
-VOICE_STT_MODEL_PATH=./models/faster-whisper-base
-VOICE_STT_DEVICE=cpu
-VOICE_STT_COMPUTE_TYPE=int8
-VOICE_TTS_MODEL_PATH=./models/pt_BR-faber-medium.onnx
-VOICE_TTS_CONFIG_PATH=./models/pt_BR-faber-medium.onnx.json
+VOICE_MOCK_ENABLED=true
 ```
 
-Instale e baixe o modelo local uma única vez:
+Para desenvolver futuramente a voz local real, instale as dependências
+opcionais e defina `VOICE_MOCK_ENABLED=false`:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-voice.txt
 .\.venv\Scripts\python.exe -c "from faster_whisper.utils import download_model; download_model('base', output_dir='models/faster-whisper-base')"
 .\.venv\Scripts\python.exe -m piper.download_voices --data-dir models pt_BR-faber-medium
 ```
 
-Áudio clínico nunca é escrito em arquivo, log ou PostgreSQL. Somente os modelos
-locais públicos ficam persistidos e são montados como leitura no Docker. Em
-produção, o navegador deve abrir o WebSocket pelo Backend Java autenticado; o
-Java adiciona a chave interna no upgrade, aplica o escopo da clínica e a RLS.
+Áudio clínico nunca é escrito em arquivo, log ou PostgreSQL.
 
 Smoke test completo sem microfone e com uma frase sintética não clínica:
 
@@ -130,19 +118,14 @@ Smoke test completo sem microfone e com uma frase sintética não clínica:
 .\.venv\Scripts\python.exe -m scripts.voice_smoke
 ```
 
-## Docker
-
-```powershell
-docker compose up --build
-```
-
-Se o PostgreSQL estiver no Windows e o FastAPI estiver no Docker, substitua
-`localhost` por `host.docker.internal` no `DATABASE_URL`.
-
 ## Testes automatizados
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+cd Java-gateway
+.\mvnw.cmd test
+cd ..\primordial-frontend-main
+npm.cmd run build
 ```
 
 Os testes verificam os contratos, as seis intenções, o bloqueio de SQL

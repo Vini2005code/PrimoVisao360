@@ -4,6 +4,10 @@ import br.com.primordialdata.visao360.client.dto.Visao360AiRequest;
 import br.com.primordialdata.visao360.client.dto.Visao360AiResponse;
 import br.com.primordialdata.visao360.client.dto.ChatDinamicoAiRequest;
 import br.com.primordialdata.visao360.client.dto.ChatDinamicoAiResponse;
+import br.com.primordialdata.visao360.client.dto.PopulacionalPlanejamentoAiRequest;
+import br.com.primordialdata.visao360.client.dto.PopulacionalPlanoAiResponse;
+import br.com.primordialdata.visao360.client.dto.PopulacionalRespostaAiRequest;
+import br.com.primordialdata.visao360.client.dto.PopulacionalRespostaAiResponse;
 import java.util.Objects;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.MediaType;
@@ -29,6 +33,28 @@ public class FastApiAiGateway implements AiGateway {
     @Override
     public ChatDinamicoAiResponse responderChat(ChatDinamicoAiRequest request) {
         return post("/ai/chat-dinamico", request, ChatDinamicoAiResponse.class);
+    }
+
+    @Override
+    public PopulacionalPlanoAiResponse planejarConsultaPopulacional(
+            PopulacionalPlanejamentoAiRequest request
+    ) {
+        return post(
+                "/ai/populacional/planejar",
+                request,
+                PopulacionalPlanoAiResponse.class
+        );
+    }
+
+    @Override
+    public PopulacionalRespostaAiResponse responderConsultaPopulacional(
+            PopulacionalRespostaAiRequest request
+    ) {
+        return post(
+                "/ai/populacional/responder",
+                request,
+                PopulacionalRespostaAiResponse.class
+        );
     }
 
     private <T> T post(String uri, Object request, Class<T> responseType) {

@@ -10,6 +10,10 @@ import org.springframework.stereotype.Service;
 public class PseudonimizacaoService {
 
     private static final Pattern CPF = Pattern.compile("(?<!\\d)\\d{3}\\.?\\d{3}\\.?\\d{3}-?\\d{2}(?!\\d)");
+    private static final Pattern CNS = Pattern.compile("(?<!\\d)\\d{15}(?!\\d)");
+    private static final Pattern RG = Pattern.compile(
+            "(?i)\\b(RG\\s*[:#-]?\\s*)[0-9X.-]{5,20}\\b"
+    );
     private static final Pattern EMAIL = Pattern.compile(
             "\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b",
             Pattern.CASE_INSENSITIVE
@@ -18,18 +22,29 @@ public class PseudonimizacaoService {
             "(?<!\\d)(?:\\+?55\\s*)?\\(?\\d{2}\\)?[\\s.-]*9?\\d{4}[\\s.-]*\\d{4}(?!\\d)"
     );
     private static final Pattern CEP = Pattern.compile("(?<!\\d)\\d{5}-?\\d{3}(?!\\d)");
+    private static final Pattern NOME_COMPLETO_PROVAVEL = Pattern.compile(
+            "(?<![\\p{L}])\\p{Lu}[\\p{L}'-]{2,}"
+                    + "(?:\\s+(?:(?:da|de|do|das|dos)\\s+)?\\p{Lu}[\\p{L}'-]{2,}){1,3}"
+                    + "(?![\\p{L}])",
+            Pattern.UNICODE_CHARACTER_CLASS
+    );
 
     public PseudonimizacaoResultado pseudonimizar(String nomePaciente, String textoClinico) {
         Objects.requireNonNull(nomePaciente, "nomePaciente é obrigatório");
         Objects.requireNonNull(textoClinico, "textoClinico é obrigatório");
 
-        String tokenPaciente = "PACIENTE_" + UUID.randomUUID();
+        UUID pacientePseudonimoId = UUID.randomUUID();
+        String tokenPaciente = tokenPaciente(pacientePseudonimoId);
         String texto = pseudonimizarTexto(nomePaciente, tokenPaciente, textoClinico);
 
         if (contemIgnorandoCaixa(texto, nomePaciente)) {
             throw new IllegalStateException("A pseudonimização do nome não foi concluída.");
         }
-        return new PseudonimizacaoResultado(tokenPaciente, texto, nomePaciente);
+        return new PseudonimizacaoResultado(
+                pacientePseudonimoId,
+                texto,
+                nomePaciente
+        );
     }
 
     public String pseudonimizar(
@@ -47,6 +62,13 @@ public class PseudonimizacaoService {
             throw new IllegalStateException("A pseudonimização do nome não foi concluída.");
         }
         return pseudonimizado;
+    }
+
+    public String pseudonimizarPerguntaPopulacional(String pergunta) {
+        Objects.requireNonNull(pergunta, "pergunta é obrigatória");
+        String pseudonimizada = removerIdentificadoresDiretos(pergunta);
+        return NOME_COMPLETO_PROVAVEL.matcher(pseudonimizada)
+                .replaceAll("[PESSOA_REMOVIDA]");
     }
 
     public String substituirTokenPaciente(
@@ -68,12 +90,19 @@ public class PseudonimizacaoService {
             String tokenPaciente,
             String textoClinico
     ) {
+        String texto = removerIdentificadoresDiretos(textoClinico);
+        texto = substituirIgnorandoCaixa(texto, nomePaciente, tokenPaciente);
+        return texto;
+    }
+
+    private String removerIdentificadoresDiretos(String textoClinico) {
         String texto = textoClinico;
         texto = CPF.matcher(texto).replaceAll("[CPF_REMOVIDO]");
+        texto = CNS.matcher(texto).replaceAll("[CNS_REMOVIDO]");
+        texto = RG.matcher(texto).replaceAll("$1[RG_REMOVIDO]");
         texto = EMAIL.matcher(texto).replaceAll("[EMAIL_REMOVIDO]");
         texto = TELEFONE.matcher(texto).replaceAll("[TELEFONE_REMOVIDO]");
         texto = CEP.matcher(texto).replaceAll("[CEP_REMOVIDO]");
-        texto = substituirIgnorandoCaixa(texto, nomePaciente, tokenPaciente);
         return texto;
     }
 
@@ -112,10 +141,23 @@ public class PseudonimizacaoService {
                 .find();
     }
 
+    private String tokenPaciente(UUID pacientePseudonimoId) {
+        return "PACIENTE_" + pacientePseudonimoId;
+    }
+
     public record PseudonimizacaoResultado(
-            String tokenPaciente,
+            UUID pacientePseudonimoId,
             String textoPseudonimizado,
             String nomeReal
     ) {
+        public PseudonimizacaoResultado {
+            Objects.requireNonNull(pacientePseudonimoId);
+            Objects.requireNonNull(textoPseudonimizado);
+            Objects.requireNonNull(nomeReal);
+        }
+
+        public String tokenPaciente() {
+            return "PACIENTE_" + pacientePseudonimoId;
+        }
     }
 }

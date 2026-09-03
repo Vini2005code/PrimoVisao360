@@ -1,10 +1,10 @@
 import { Toaster } from "sonner";
-import PrimordialDataPage from "@/features/patients/pages/PrimordialDataPage";
+import AppRoutes from "@/app/routes/AppRoutes";
 
 export default function App() {
   return (
     <>
-      <PrimordialDataPage />
+      <AppRoutes />
       <Toaster position="top-center" closeButton duration={3500} />
     </>
   );

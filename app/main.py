@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
+load_dotenv() # Isso força a leitura do arquivo .env independente do terminal
+
 import logging
 import re
 from contextlib import asynccontextmanager
@@ -21,7 +24,7 @@ from app.core.config import Settings, get_settings
 from app.database.client import ReadOnlyPostgres
 from app.services.groq_service import GroqVisionService
 from app.web.routes import router as web_router
-from app.voice.providers import VoicePipelineService
+from app.voice.providers import MockVoicePipelineService, VoicePipelineService
 from app.voice.routes import router as voice_router
 
 
@@ -47,13 +50,15 @@ async def lifespan(app: FastAPI):
             database = ReadOnlyPostgres(settings)
             await database.connect()
             app.state.database = database
-            if settings.voice_enabled:
+            if settings.voice_enabled and not settings.voice_mock_enabled:
                 chat_service = ClinicalChatService(
                     ClinicalChatRepository(database, settings)
                 )
                 app.state.voice_service = await VoicePipelineService.create(
                     settings, chat_service
                 )
+        if settings.voice_enabled and settings.voice_mock_enabled:
+            app.state.voice_service = MockVoicePipelineService(settings)
         yield
     finally:
         if isinstance(app.state.voice_service, VoicePipelineService):
@@ -126,9 +131,10 @@ def create_app() -> FastAPI:
             for erro in exc.errors()
         ]
         logging.getLogger(__name__).warning(
-            "request_validation_failed request_id=%s errors=%d",
+            "request_validation_failed request_id=%s errors=%d details=%s",
             getattr(request.state, "request_id", "unknown"),
             len(erros),
+            erros,
         )
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

@@ -30,7 +30,30 @@ O perfil `stub` existe exclusivamente para testes automatizados sem dependência
 
 ## PostgreSQL e FastAPI
 
-Preencha variáveis equivalentes às de `.env.example` e ative o perfil:
+O Gateway aceita a mesma `DATABASE_URL=postgresql://...` utilizada pelo Python e a
+converte internamente para JDBC sem registrar usuário ou senha. Antes da primeira
+execução, o proprietário do schema deve aplicar o contrato aditivo:
+
+```powershell
+psql -d Primordial_Interno -f src/main/resources/db/postgres-ehr-teste-bridge.sql
+```
+
+Esse script não altera as tabelas clínicas atuais. Ele cria mapeamentos UUID
+externos, a visão restrita `prontuario_paciente`, a tabela persistente
+`visao360_insight` e suas políticas RLS.
+
+Crie uma role exclusiva, sem `SUPERUSER`, sem `BYPASSRLS` e que não seja
+proprietária das tabelas. Conceda somente:
+
+```sql
+GRANT CONNECT ON DATABASE "Primordial_Interno" TO primordial_app;
+GRANT USAGE ON SCHEMA ehr_teste TO primordial_app;
+GRANT SELECT ON TABLE ehr_teste.prontuario_paciente TO primordial_app;
+GRANT SELECT, INSERT, DELETE ON TABLE ehr_teste.visao360_insight TO primordial_app;
+```
+
+Preencha as variáveis de `.env.example`. O Spring importa automaticamente o
+`.env` da raiz do projeto ou um `.env` dentro de `Java-gateway`. Ative o perfil:
 
 ```powershell
 $env:SPRING_PROFILES_ACTIVE = 'postgres'
@@ -41,7 +64,12 @@ $env:SPRING_PROFILES_ACTIVE = 'postgres'
 
 Nesse perfil:
 
-- `ddl-auto=validate`: o gateway não cria nem altera o schema gerenciado pela outra equipe.
+- `DATABASE_URL` pode usar `postgresql://`, `postgres://` ou `jdbc:postgresql://`.
+- `DB_SCHEMA=ehr_teste` define explicitamente o schema clínico.
+- `ddl-auto=none`: o gateway nunca cria nem altera objetos do PostgreSQL na inicialização.
+- Um verificador Fail Fast confirma as relações obrigatórias, o RLS forçado, a
+  ausência de pacientes compartilhados entre clínicas e uma role sem privilégios
+  capazes de ignorar RLS.
 - `RlsAspect` abre a transação, chama `set_config(..., true)` com parâmetro e executa a consulta no mesmo escopo transacional.
 - A consulta também filtra `clinic_id` explicitamente como defesa em profundidade.
 - O payload enviado ao FastAPI segue o contrato estrito de `/ai/gerar-visao-360` e usa `X-Internal-API-Key`.
@@ -50,7 +78,10 @@ Nesse perfil:
 - O histórico é reidentificado somente na resposta do gateway, após as validações de tenant e RLS.
 - O conteúdo persistido não possui operação de atualização; a remoção ocorre somente por `DELETE` explícito.
 
-Os arquivos `src/main/resources/db/rls-example.sql` e `src/main/resources/db/visao360-insight-history.sql` são referências para a equipe do banco; eles não rodam automaticamente. O usuário PostgreSQL da aplicação não pode ser superuser, proprietário da tabela ou possuir `BYPASSRLS`.
+O contrato atual do banco está em
+`src/main/resources/db/postgres-ehr-teste-bridge.sql` e não roda automaticamente.
+`DATABASE_REQUIRE_SAFE_ROLE=false` existe apenas para diagnóstico local temporário;
+produção deve manter o valor `true`.
 
 ## Histórico de insights
 

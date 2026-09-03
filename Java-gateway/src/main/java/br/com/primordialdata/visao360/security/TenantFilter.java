@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -16,6 +17,17 @@ import org.springframework.web.filter.OncePerRequestFilter;
 public class TenantFilter extends OncePerRequestFilter {
 
     private static final String TENANT_HEADER = "X-Clinic-ID";
+    private final boolean headerRequired;
+    private final UUID localClinicId;
+
+    public TenantFilter(
+            @Value("${app.tenant.header-required:true}") boolean headerRequired,
+            @Value("${app.tenant.local-clinic-id:11111111-1111-4111-8111-111111111111}")
+            UUID localClinicId
+    ) {
+        this.headerRequired = headerRequired;
+        this.localClinicId = localClinicId;
+    }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -30,7 +42,9 @@ public class TenantFilter extends OncePerRequestFilter {
             FilterChain filterChain
     ) throws ServletException, IOException {
         String rawClinicId = request.getHeader(TENANT_HEADER);
-        UUID clinicId = parseClinicId(rawClinicId);
+        UUID clinicId = rawClinicId == null || rawClinicId.isBlank()
+                ? (headerRequired ? null : localClinicId)
+                : parseClinicId(rawClinicId);
         if (clinicId == null) {
             writeInvalidTenantResponse(response);
             return;

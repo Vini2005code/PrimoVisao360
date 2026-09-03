@@ -1,8 +1,12 @@
 spring:
   application:
     name: visao360-gateway
+  config:
+    import:
+      - optional:file:../.env[.properties]
+      - optional:file:.env[.properties]
   profiles:
-    default: local
+    active: ${SPRING_PROFILES_ACTIVE:mvp}
   jackson:
     default-property-inclusion: non_null
   jpa:
@@ -31,6 +35,15 @@ management:
 app:
   rls:
     enabled: false
+  tenant:
+    header-required: true
+    local-clinic-id: ${LOCAL_CLINIC_ID:11111111-1111-4111-8111-111111111111}
+  database:
+    url: ${DATABASE_URL:}
+    username: ${DATABASE_USERNAME:}
+    password: ${DATABASE_PASSWORD:}
+    schema: ${DB_SCHEMA:public}
+    require-safe-role: ${DATABASE_REQUIRE_SAFE_ROLE:true}
   ai:
     base-url: ${AI_SERVICE_BASE_URL:http://127.0.0.1:8000}
     internal-api-key: ${INTERNAL_API_KEY:local-development-key-not-for-production}
@@ -65,30 +78,43 @@ spring:
 app:
   rls:
     enabled: false
+  tenant:
+    header-required: false
+
+---
+spring:
+  config:
+    activate:
+      on-profile: mvp
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        default_schema: ${DB_SCHEMA:public}
+    show-sql: false
+
+app:
+  rls:
+    enabled: false
+  tenant:
+    header-required: false
 
 ---
 spring:
   config:
     activate:
       on-profile: postgres
-  datasource:
-    url: ${DATABASE_URL}
-    username: ${DATABASE_USERNAME}
-    password: ${DATABASE_PASSWORD}
-    driver-class-name: org.postgresql.Driver
-    hikari:
-      pool-name: PrimordialRlsPool
-      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
-      minimum-idle: ${DB_POOL_MIN_IDLE:2}
-      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:10000}
-      validation-timeout: 3000
-      leak-detection-threshold: ${DB_LEAK_DETECTION_MS:30000}
   jpa:
-    database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
-      ddl-auto: validate
+      ddl-auto: none
+    properties:
+      hibernate:
+        default_schema: ${DB_SCHEMA:public}
     show-sql: false
 
 app:
   rls:
     enabled: true
+  tenant:
+    header-required: true

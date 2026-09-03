@@ -11,9 +11,13 @@ from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect, status
 from pydantic import ValidationError
 
 from app.core.config import Settings, get_settings
-from app.voice.providers import VoicePipelineService, VoiceProviderError
+from app.voice.providers import (
+    VoiceCapacityExceeded,
+    VoicePipelineService,
+    VoiceProviderError,
+)
 from app.voice.schemas import VoiceCommand, VoiceStart
-from app.voice.security import zeroize
+from app.voice.security import release_ephemeral_memory, zeroize
 
 
 logger = logging.getLogger(__name__)
@@ -61,10 +65,18 @@ async def voice_status(request: Request) -> dict[str, object]:
         "enabled": settings.voice_enabled,
         "available": available,
         "transport": "websocket",
-        "stt_provider": "local",
-        "tts_provider": "local",
+        "stt_provider": (
+            "mock" if settings.voice_enabled and settings.voice_mock_enabled else "local"
+        ),
+        "tts_provider": (
+            "mock" if settings.voice_enabled and settings.voice_mock_enabled else "local"
+        ),
         "raw_audio_external": False,
         "audio_persistence": False,
+        "max_parallel_turns": settings.voice_turn_max_concurrency,
+        "queue_timeout_ms": round(settings.voice_queue_timeout_seconds * 1000),
+        "max_audio_bytes": settings.voice_max_audio_bytes,
+        "max_seconds": settings.voice_max_seconds,
     }
 
 
@@ -121,7 +133,14 @@ async def voice_websocket(websocket: WebSocket) -> None:
                         {"type": "error", "code": "size_limit"}
                     )
                     continue
-                audio.extend(binary)
+                # Starlette fornece bytes imutáveis. A cópia mutável é zerada
+                # logo após ser consolidada no buffer limitado do turno.
+                chunk = bytearray(binary)
+                try:
+                    audio.extend(chunk)
+                finally:
+                    zeroize(chunk)
+                    del binary
                 continue
 
             text = message.get("text")
@@ -191,10 +210,19 @@ async def voice_websocket(websocket: WebSocket) -> None:
                     result.metrics.llm_ms,
                     result.metrics.tts_ms,
                 )
+            except VoiceCapacityExceeded:
+                logger.info("voice_turn_rejected reason=capacity")
+                await websocket.send_json(
+                    {"type": "error", "code": "voice_busy", "retryable": True}
+                )
             except VoiceProviderError:
                 logger.warning("voice_turn_failed reason=provider")
                 await websocket.send_json(
-                    {"type": "error", "code": "voice_provider_unavailable"}
+                    {
+                        "type": "error",
+                        "code": "voice_provider_unavailable",
+                        "retryable": False,
+                    }
                 )
             except Exception:
                 logger.exception("voice_turn_failed reason=internal")
@@ -202,12 +230,13 @@ async def voice_websocket(websocket: WebSocket) -> None:
                     {"type": "error", "code": "voice_processing_failed"}
                 )
             finally:
-                zeroize(audio)
+                release_ephemeral_memory(audio)
                 mime_type = None
                 turn_started = None
                 if result is not None:
-                    zeroize(result.audio_wav)
+                    release_ephemeral_memory(result.audio_wav)
+                    result = None
     except WebSocketDisconnect:
         pass
     finally:
-        zeroize(audio)
+        release_ephemeral_memory(audio)

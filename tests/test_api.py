@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import unittest
+from copy import deepcopy
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -33,7 +36,10 @@ from app.services.groq_service import (  # noqa: E402
     TokenUsage,
     VisionGeneration,
 )
-from app.voice.providers import VoicePipelineService  # noqa: E402
+from app.voice.providers import (  # noqa: E402
+    VoicePipelineService,
+    VoiceProviderError,
+)
 from app.voice.security import PseudonymizationSession, zeroize  # noqa: E402
 
 
@@ -41,6 +47,7 @@ VALID_PAYLOAD = {
     "clinic_id": "550e8400-e29b-41d4-a716-446655440000",
     "lgpd_nivel": "pseudonimizado",
     "paciente": {
+        "id_pseudonimo": "12345678-1234-4234-8234-123456789012",
         "idade": 42,
         "sexo": "M",
         "status": "ativo",
@@ -69,6 +76,18 @@ VALID_PAYLOAD = {
             "tipo": "ambulatorial",
         }
     ],
+    "medicamentos": [
+        {
+            "nome_medicamento": "Losartana",
+            "dose": "50",
+            "unidade": "mg",
+            "via": "oral",
+            "frequencia": "1 vez ao dia",
+            "iniciado_em": "2024-01-10",
+            "encerrado_em": None,
+            "status": "ativo",
+        }
+    ],
 }
 
 VALID_CHAT_PAYLOAD = {
@@ -81,6 +100,7 @@ VALID_CHAT_PAYLOAD = {
         "sinais_vitais": VALID_PAYLOAD["sinais_vitais"],
         "alergias": VALID_PAYLOAD["alergias"],
         "evolucoes": VALID_PAYLOAD["evolucoes"],
+        "medicamentos": VALID_PAYLOAD["medicamentos"],
         "insights_persistidos": [
             {
                 "gerado_em": "2026-08-27T13:40:00Z",
@@ -237,6 +257,53 @@ class DatabaseConfigTest(unittest.TestCase):
                 Settings.from_env()
 
 
+class ClinicalContractTest(unittest.TestCase):
+    def test_preserva_cronologia_medicamentos_e_decimal_tolerante(self) -> None:
+        payload = deepcopy(VALID_PAYLOAD)
+        payload["sinais_vitais"] = [
+            {
+                "tipo": "pressao_sistolica",
+                "valor": "138,5",
+                "unidade": "mmHg",
+                "aferido_em": "2024-03-15T14:30:00-03:00",
+            },
+            {
+                "tipo": "pressao_sistolica",
+                "valor": 126,
+                "unidade": "mmHg",
+                "aferido_em": "2024-04-15",
+            },
+        ]
+
+        validado = Visao360Entrada.model_validate(payload)
+
+        self.assertEqual(validado.sinais_vitais[0].valor, Decimal("138.5"))
+        self.assertEqual(
+            validado.sinais_vitais[0].aferido_em.isoformat(),
+            "2024-03-15T14:30:00-03:00",
+        )
+        self.assertEqual(validado.sinais_vitais[1].aferido_em.isoformat(), "2024-04-15")
+        self.assertEqual(validado.medicamentos[0].nome_medicamento, "Losartana")
+        self.assertEqual(validado.medicamentos[0].iniciado_em.isoformat(), "2024-01-10")
+
+    def test_barreira_lgpd_continua_rejeitando_pii_em_campo_clinico(self) -> None:
+        payload = deepcopy(VALID_PAYLOAD)
+        payload["evolucoes"][0]["texto"] = "Contato joao@example.com"
+
+        with self.assertRaisesRegex(ValueError, "LGPD"):
+            Visao360Entrada.model_validate(payload)
+
+    def test_aceita_marcador_de_pii_ja_removida_pelo_java(self) -> None:
+        payload = deepcopy(VALID_PAYLOAD)
+        payload["evolucoes"][0]["texto"] = (
+            "CPF: [CPF_REMOVIDO]; CNS [CNS_REMOVIDO]; evolução preservada."
+        )
+
+        validado = Visao360Entrada.model_validate(payload)
+
+        self.assertIn("[CPF_REMOVIDO]", validado.evolucoes[0].texto)
+
+
 class ControlledChatTest(unittest.TestCase):
     def test_classifica_as_seis_perguntas_cadastradas(self) -> None:
         questions = {
@@ -297,6 +364,7 @@ class VoiceSecurityTest(unittest.TestCase):
             os.environ,
             {
                 "VOICE_ENABLED": "true",
+                "VOICE_MOCK_ENABLED": "false",
                 "VOICE_STT_MODEL_PATH": "",
                 "VOICE_TTS_MODEL_PATH": "models/voice.onnx",
                 "VOICE_TTS_CONFIG_PATH": "models/voice.onnx.json",
@@ -327,6 +395,17 @@ class FakeLocalSTT:
 
     async def close(self) -> None:
         return None
+
+
+class BlockingLocalSTT(FakeLocalSTT):
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def transcribe(self, audio, mime_type):  # noqa: ANN001, ANN201
+        self.started.set()
+        await self.release.wait()
+        return await super().transcribe(audio, mime_type)
 
 
 class FakeVoiceGroq:
@@ -384,6 +463,42 @@ class VoicePipelineTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Joao Fonseca", groq.safe_question)
         self.assertNotIn("Joao Fonseca", groq.safe_answer)
         self.assertEqual(result.audio_wav[:4], b"RIFF")
+
+    async def test_rejeita_turno_excedente_e_limpa_audio_em_espera(self) -> None:
+        settings = Settings(
+            app_env="test",
+            cors_allowed_origins=(),
+            docs_enabled=True,
+            groq_api_key=os.environ["GROQ_API_KEY"],
+            groq_max_completion_tokens=1200,
+            groq_max_retries=0,
+            groq_model="openai/gpt-oss-20b",
+            groq_timeout_seconds=5,
+            internal_api_key=os.environ["INTERNAL_API_KEY"],
+            log_level="INFO",
+            voice_turn_max_concurrency=1,
+            voice_queue_timeout_seconds=0.05,
+        )
+        stt = BlockingLocalSTT()
+        service = VoicePipelineService(
+            settings,
+            FakeVoiceChat(),
+            stt,
+            FakeVoiceGroq(),
+            FakeVoiceTTS(),
+        )
+        first_audio = bytearray(b"first-turn")
+        first = asyncio.create_task(service.process(first_audio, "audio/webm"))
+        await stt.started.wait()
+
+        excess_audio = bytearray(b"excess-turn")
+        with self.assertRaisesRegex(VoiceProviderError, "Capacidade"):
+            await service.process(excess_audio, "audio/webm")
+        self.assertEqual(excess_audio, bytearray())
+
+        stt.release.set()
+        result = await first
+        zeroize(result.audio_wav)
 
 
 class VisionApiTest(unittest.IsolatedAsyncioTestCase):
@@ -470,6 +585,10 @@ class VisionApiTest(unittest.IsolatedAsyncioTestCase):
                 "tts_provider": "local",
                 "raw_audio_external": False,
                 "audio_persistence": False,
+                "max_parallel_turns": 1,
+                "queue_timeout_ms": 250,
+                "max_audio_bytes": 10_485_760,
+                "max_seconds": 60,
             },
         )
 
@@ -566,6 +685,10 @@ class VisionApiTest(unittest.IsolatedAsyncioTestCase):
         user_content = arguments["messages"][1]["content"]
         self.assertNotIn(VALID_PAYLOAD["clinic_id"], user_content)
         self.assertNotIn("lgpd_nivel", user_content)
+        self.assertIn("Losartana", user_content)
+        self.assertIn("2024-01-10", user_content)
+        self.assertIn("2024-03-15", user_content)
+        self.assertIn("Hemoglobina 14,2 g/dL", user_content)
         self.assertTrue(arguments["response_format"]["json_schema"]["strict"])
         self.assertEqual(result.usage.total_tokens, 140)
 
@@ -596,6 +719,10 @@ class VisionApiTest(unittest.IsolatedAsyncioTestCase):
         user_content = arguments["messages"][1]["content"]
         self.assertNotIn(VALID_CHAT_PAYLOAD["clinic_id"], user_content)
         self.assertNotIn("lgpd_nivel", user_content)
+        self.assertIn("Losartana", user_content)
+        self.assertIn("2024-01-10", user_content)
+        self.assertIn("2024-03-15", user_content)
+        self.assertIn("Hemoglobina 14,2 g/dL", user_content)
         self.assertTrue(arguments["response_format"]["json_schema"]["strict"])
         self.assertEqual(result.usage.total_tokens, 140)
 

@@ -50,11 +50,14 @@ class Visao360ControllerIntegrationTest {
     }
 
     @Test
-    void rejeitaRequisicaoSemTenant() throws Exception {
+    void usaClinicaLocalQuandoHeaderNaoFoiInformado() throws Exception {
         mockMvc.perform(post("/api/v1/visao360/insights")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"paciente_id\":\"" + PACIENTE_A + "\"}"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resumo_executivo").value(
+                        org.hamcrest.Matchers.containsString("Paciente Demonstração")
+                ));
     }
 
     @Test
@@ -124,6 +127,53 @@ class Visao360ControllerIntegrationTest {
                         org.hamcrest.Matchers.not(
                                 org.hamcrest.Matchers.containsString("joao@example.com")
                         )
+                ));
+    }
+
+    @Test
+    void chatPopulacionalPlanejaExecutaComTenantERedigeAgregado() throws Exception {
+        mockMvc.perform(post("/api/v1/visao360/chat/populacional")
+                        .header("X-Clinic-ID", CLINICA_A)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "pergunta": "Quantos pacientes existem na clínica?"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status_processamento").value("sucesso"))
+                .andExpect(jsonPath("$.resposta").value(
+                        org.hamcrest.Matchers.containsString("1 pacientes")
+                ));
+    }
+
+    @Test
+    void chatPopulacionalUsaClinicaLocalSemHeader() throws Exception {
+        mockMvc.perform(post("/api/v1/visao360/chat/populacional")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "pergunta": "Quantos pacientes existem na clínica?"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status_processamento").value("sucesso"));
+    }
+
+    @Test
+    void chatPopulacionalDeDiagnosticosTambemExecutaNoPerfilLocal() throws Exception {
+        mockMvc.perform(post("/api/v1/visao360/chat/populacional")
+                        .header("X-Clinic-ID", CLINICA_A)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "pergunta": "Quais doenças são mais comuns?"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status_processamento").value("sucesso"))
+                .andExpect(jsonPath("$.resposta").value(
+                        org.hamcrest.Matchers.containsString("categorias agregadas")
                 ));
     }
 

@@ -17,7 +17,21 @@ public record ChatDinamicoAiRequest(
             @JsonProperty("sinais_vitais") List<Visao360AiRequest.SinalVital> sinaisVitais,
             List<Visao360AiRequest.Alergia> alergias,
             List<Visao360AiRequest.Evolucao> evolucoes,
-            @JsonProperty("insights_persistidos") List<InsightPersistido> insightsPersistidos
+            List<Visao360AiRequest.Medicamento> medicamentos,
+            @JsonProperty("insights_persistidos") List<InsightPersistido> insightsPersistidos,
+            @JsonProperty("estatisticas_clinica") EstatisticasClinica estatisticasClinica
+    ) {
+    }
+
+    public record EstatisticasClinica(
+            @JsonProperty("total_pacientes") long totalPacientes,
+            @JsonProperty("pacientes_por_sexo") List<QuantidadePorSexo> pacientesPorSexo
+    ) {
+    }
+
+    public record QuantidadePorSexo(
+            String sexo,
+            long quantidade
     ) {
     }
 

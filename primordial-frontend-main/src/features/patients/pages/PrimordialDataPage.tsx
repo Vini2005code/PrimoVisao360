@@ -1,7 +1,7 @@
 import PatientVision360Tab from "../components/detail/PatientVision360Tab";
 
-const LOCAL_PREVIEW_CLINIC_ID = "550e8400-e29b-41d4-a716-446655440000";
-const LOCAL_PREVIEW_PATIENT_ID = "550e8400-e29b-41d4-a716-446655440001";
+const LOCAL_PREVIEW_CLINIC_ID = "51dd9d7d-92a2-5af1-a5ef-adc5924b2864";
+const LOCAL_PREVIEW_PATIENT_ID = "b43a334a-7d6a-5f80-ac74-26bbdb3ac676";
 
 export default function PrimordialDataPage() {
   return (
@@ -10,7 +10,7 @@ export default function PrimordialDataPage() {
         <PatientVision360Tab
           clinicId={LOCAL_PREVIEW_CLINIC_ID}
           patientId={LOCAL_PREVIEW_PATIENT_ID}
-          patientName="Paciente de demonstração"
+          patientName="Paciente do banco de teste"
         />
       </div>
     </main>

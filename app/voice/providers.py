@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import io
 import json
 import wave
@@ -17,11 +18,19 @@ from pydantic import ValidationError
 from app.chat.schemas import ChatAnswer
 from app.core.config import Settings
 from app.voice.schemas import VoiceInsight
-from app.voice.security import PseudonymizationSession, zeroize
+from app.voice.security import (
+    PseudonymizationSession,
+    release_ephemeral_memory,
+    zeroize,
+)
 
 
 class VoiceProviderError(RuntimeError):
     """Falha segura em um provedor do pipeline de voz."""
+
+
+class VoiceCapacityExceeded(VoiceProviderError):
+    """O limite de turnos simultâneos foi atingido."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +156,7 @@ class LocalSpeechToTextProvider:
         finally:
             if samples is not None:
                 samples.fill(0)
+                del samples
             if not encoded.closed:
                 view = encoded.getbuffer()
                 try:
@@ -154,6 +164,9 @@ class LocalSpeechToTextProvider:
                 finally:
                     view.release()
                     encoded.close()
+            # Arrays PCM e buffers do PyAV/NumPy usam memória nativa. Remover
+            # as referências aqui evita que sobrevivam ao retorno do STT.
+            gc.collect(0)
 
         if not text or len(text) > 4_000:
             raise VoiceProviderError("A transcricao local e invalida.")
@@ -303,6 +316,9 @@ class VoicePipelineService:
         self._stt = stt_provider
         self._groq = groq_provider
         self._tts = tts_provider
+        self._turn_semaphore = asyncio.Semaphore(
+            settings.voice_turn_max_concurrency
+        )
 
     @classmethod
     async def create(cls, settings: Settings, chat_service: Any) -> "VoicePipelineService":
@@ -319,6 +335,26 @@ class VoicePipelineService:
         return cls(settings, chat_service, stt, groq, tts)
 
     async def process(self, audio: bytearray, mime_type: str) -> VoiceTurnResult:
+        acquired = False
+        try:
+            await asyncio.wait_for(
+                self._turn_semaphore.acquire(),
+                timeout=self._settings.voice_queue_timeout_seconds,
+            )
+            acquired = True
+            return await self._process_turn(audio, mime_type)
+        except TimeoutError:
+            release_ephemeral_memory(audio)
+            raise VoiceCapacityExceeded(
+                "Capacidade de voz ocupada; tente novamente."
+            ) from None
+        finally:
+            if acquired:
+                self._turn_semaphore.release()
+
+    async def _process_turn(
+        self, audio: bytearray, mime_type: str
+    ) -> VoiceTurnResult:
         pseudonymizer: PseudonymizationSession | None = None
         output_audio = bytearray()
         try:
@@ -326,7 +362,7 @@ class VoicePipelineService:
             transcript = await self._stt.transcribe(audio, mime_type)
             stt_ms = round((perf_counter() - started) * 1000)
             # O buffer de voz deixa de existir assim que a transcricao termina.
-            zeroize(audio)
+            release_ephemeral_memory(audio)
 
             query_started = perf_counter()
             identifiers = await self._chat_service.find_sensitive_values(transcript)
@@ -357,7 +393,7 @@ class VoicePipelineService:
                 ),
             )
         except Exception:
-            zeroize(output_audio)
+            release_ephemeral_memory(audio, output_audio)
             raise
         finally:
             if pseudonymizer is not None:
@@ -367,3 +403,38 @@ class VoicePipelineService:
         await self._tts.close()
         await self._stt.close()
         await self._groq.close()
+
+
+class MockVoicePipelineService(VoicePipelineService):
+    """Mock localhost que nao decodifica, persiste ou envia audio."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+
+    async def process(self, audio: bytearray, mime_type: str) -> VoiceTurnResult:
+        del mime_type
+        release_ephemeral_memory(audio)
+        transcript = "Transcricao simulada do modo de voz local."
+        answer = (
+            "O modo de voz esta em desenvolvimento. Use o campo de texto "
+            "para consultar os dados clinicos neste MVP."
+        )
+        memory = io.BytesIO()
+        try:
+            with wave.open(memory, "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(16_000)
+                wav_file.writeframes(b"\x00\x00" * 1_600)
+            audio_wav = bytearray(memory.getvalue())
+        finally:
+            memory.close()
+        return VoiceTurnResult(
+            transcript=transcript,
+            answer=answer,
+            audio_wav=audio_wav,
+            metrics=VoiceTurnMetrics(stt_ms=0, query_ms=0, llm_ms=0, tts_ms=0),
+        )
+
+    async def close(self) -> None:
+        return None

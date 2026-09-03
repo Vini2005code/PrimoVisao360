@@ -2,6 +2,7 @@ import {
   Bookmark,
   BookmarkCheck,
   Bot,
+  Building2,
   ChartNoAxesCombined,
   Download,
   FileText,
@@ -41,6 +42,7 @@ import { formatDateTime } from "@/shared/utils/formatters/date";
 import { usePatientVision360 } from "../../hooks/usePatientVision360";
 import { exportPatientVision360Pdf } from "../../services/patientVision360Pdf.service";
 import type {
+  PatientVision360ChatScope,
   PatientVision360Message,
   PatientVision360SavedItem,
 } from "../../types/patientVision360.types";
@@ -50,11 +52,18 @@ const PatientVision360ChartView = lazy(
   () => import("./PatientVision360Chart"),
 );
 
-const SUGGESTED_QUESTIONS = [
-  "Resuma os registros clínicos disponíveis.",
-  "Mostre a evolução dos sinais vitais registrados.",
-  "Organize os resultados de exames por período.",
-];
+const SUGGESTED_QUESTIONS: Record<PatientVision360ChatScope, string[]> = {
+  clinic: [
+    "Quantos pacientes estão cadastrados na clínica?",
+    "Qual é a idade média dos pacientes?",
+    "Quais são os diagnósticos mais comuns?",
+  ],
+  patient: [
+    "Resuma os registros clínicos disponíveis.",
+    "Mostre a evolução dos sinais vitais registrados.",
+    "Organize os resultados de exames por período.",
+  ],
+};
 
 type PatientVision360TabProps = {
   patientId: string;
@@ -231,6 +240,8 @@ export default function PatientVision360Tab({
   patientName,
 }: PatientVision360TabProps) {
   const [message, setMessage] = useState("");
+  const [chatScope, setChatScope] =
+    useState<PatientVision360ChatScope>("clinic");
   const [isExporting, setIsExporting] = useState(false);
   const vision360 = usePatientVision360({
     patientId,
@@ -259,7 +270,7 @@ export default function PatientVision360Tab({
 
     if (!safeMessage || vision360.sendMessage.isPending) return;
 
-    vision360.sendMessage.mutate(safeMessage, {
+    vision360.sendMessage.mutate({ message: safeMessage, scope: chatScope }, {
       onSuccess: () => setMessage(""),
       onError: () =>
         showErrorFeedback(
@@ -372,20 +383,53 @@ export default function PatientVision360Tab({
         </TabsList>
 
         <TabsContent value="chat" className="mt-4">
-          <div className="mb-4">
-            <VoiceConversationPanel clinicId={clinicId} patientId={patientId} />
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-3">
+            <div>
+              <p className="text-sm font-medium">Escopo da conversa</p>
+              <p className="text-xs text-muted-foreground">
+                Escolha quais registros autorizados serão consultados.
+              </p>
+            </div>
+            <div className="flex rounded-lg border bg-muted/30 p-1" role="group" aria-label="Escopo da conversa">
+              <Button
+                type="button"
+                size="sm"
+                variant={chatScope === "clinic" ? "default" : "ghost"}
+                onClick={() => setChatScope("clinic")}
+              >
+                <Building2 />
+                Clínica
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={chatScope === "patient" ? "default" : "ghost"}
+                onClick={() => setChatScope("patient")}
+              >
+                <UserRound />
+                Paciente atual
+              </Button>
+            </div>
           </div>
+
+          {chatScope === "patient" ? (
+            <div className="mb-4">
+              <VoiceConversationPanel clinicId={clinicId} patientId={patientId} />
+            </div>
+          ) : null}
 
           <Card className="overflow-hidden">
             <CardHeader className="border-b py-4">
               <CardTitle className="flex items-center gap-2 text-base">
                 <Bot className="size-5 text-primary" />
-                Assistente clínico
+                {chatScope === "clinic"
+                  ? "Assistente populacional da clínica"
+                  : "Assistente do paciente atual"}
               </CardTitle>
               <CardDescription>
-                Consulte os registros disponíveis e solicite visualizações. As
-                respostas são informativas e não indicam diagnóstico ou
-                conduta.
+                {chatScope === "clinic"
+                  ? "Consulte somente estatísticas agregadas protegidas pelo isolamento da clínica. Frequência não representa gravidade clínica."
+                  : "Consulte os registros autorizados deste paciente. As respostas são informativas e não indicam diagnóstico ou conduta."}
               </CardDescription>
             </CardHeader>
 
@@ -417,7 +461,7 @@ export default function PatientVision360Tab({
                   icon={<Sparkles />}
                   action={
                     <div className="flex max-w-2xl flex-wrap justify-center gap-2">
-                      {SUGGESTED_QUESTIONS.map((question) => (
+                      {SUGGESTED_QUESTIONS[chatScope].map((question) => (
                         <Button
                           key={question}
                           type="button"
@@ -453,7 +497,7 @@ export default function PatientVision360Tab({
                     message={{
                       id: "pending-user-message",
                       role: "user",
-                      content: vision360.sendMessage.variables,
+                      content: vision360.sendMessage.variables.message,
                       created_at: new Date().toISOString(),
                     }}
                     isSaved={false}
@@ -479,10 +523,14 @@ export default function PatientVision360Tab({
                 <Textarea
                   id="vision-360-message"
                   value={message}
-                  maxLength={4_000}
+                  maxLength={1_000}
                   rows={3}
                   disabled={vision360.sendMessage.isPending}
-                  placeholder="Pergunte sobre os registros deste paciente ou solicite um gráfico..."
+                  placeholder={
+                    chatScope === "clinic"
+                      ? "Pergunte sobre totais, idade média ou diagnósticos frequentes da clínica..."
+                      : "Pergunte sobre os registros deste paciente..."
+                  }
                   onChange={(event) => setMessage(event.target.value)}
                   onKeyDown={(event) => {
                     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
@@ -492,7 +540,7 @@ export default function PatientVision360Tab({
                 />
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs text-muted-foreground">
-                    Ctrl + Enter para enviar · {message.length}/4000
+                    Ctrl + Enter para enviar · {message.length}/1000
                   </p>
                   <Button
                     type="submit"

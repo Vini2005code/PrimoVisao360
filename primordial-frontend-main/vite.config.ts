@@ -11,6 +11,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      "/api/v1/visao360": "http://127.0.0.1:8080",
       "/primordial-data": "http://127.0.0.1:8000",
       "/static/primordial-data": "http://127.0.0.1:8000",
       "/voice": {

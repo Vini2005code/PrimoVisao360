@@ -21,6 +21,7 @@ import uvicorn
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_ENV_FILE = PROJECT_ROOT / ".env"
 FRONTEND_DIR = PROJECT_ROOT / "primordial-frontend-main"
+JAVA_DIR = PROJECT_ROOT / "Java-gateway"
 HOST = "127.0.0.1"
 
 
@@ -36,6 +37,7 @@ def _arguments() -> argparse.Namespace:
     )
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--frontend-port", type=int, default=5173)
+    parser.add_argument("--java-port", type=int, default=8080)
     parser.add_argument(
         "--no-browser",
         action="store_true",
@@ -50,6 +52,11 @@ def _arguments() -> argparse.Namespace:
         "--no-frontend",
         action="store_true",
         help="Inicia somente o FastAPI, sem o Vite.",
+    )
+    parser.add_argument(
+        "--no-java",
+        action="store_true",
+        help="Inicia sem o Gateway Java.",
     )
     return parser.parse_args()
 
@@ -132,7 +139,41 @@ def _start_frontend(port: int) -> subprocess.Popen[bytes]:
     raise RuntimeError("O frontend nao ficou pronto dentro de 60 segundos.")
 
 
-def _stop_frontend(process: subprocess.Popen[bytes] | None) -> None:
+def _start_java(port: int) -> subprocess.Popen[bytes]:
+    wrapper = JAVA_DIR / ("mvnw.cmd" if os.name == "nt" else "mvnw")
+    if not wrapper.is_file():
+        raise RuntimeError("Gateway Java ou Maven Wrapper nao encontrado.")
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    process = subprocess.Popen(
+        [
+            str(wrapper),
+            "spring-boot:run",
+            f"-Dspring-boot.run.arguments=--server.port={port}",
+        ],
+        cwd=JAVA_DIR,
+        stdin=subprocess.DEVNULL,
+        stdout=None,
+        stderr=None,
+        creationflags=flags,
+    )
+    health_url = f"http://{HOST}:{port}/actuator/health"
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(
+                "O Gateway Java encerrou durante a inicializacao. Consulte o log acima."
+            )
+        try:
+            with urllib.request.urlopen(health_url, timeout=1) as response:
+                if response.status == 200:
+                    return process
+        except (OSError, urllib.error.URLError):
+            time.sleep(0.5)
+    _stop_process(process)
+    raise RuntimeError("O Gateway Java nao ficou pronto dentro de 120 segundos.")
+
+
+def _stop_process(process: subprocess.Popen[bytes] | None) -> None:
     if process is None or process.poll() is not None:
         return
     if os.name == "nt":
@@ -171,6 +212,8 @@ def main() -> int:
         _validate_port(args.port)
         if not args.no_frontend:
             _validate_port(args.frontend_port)
+        if not args.no_java:
+            _validate_port(args.java_port)
     except RuntimeError as exc:
         print(f"\nNao foi possivel iniciar: {exc}\n", file=sys.stderr)
         return 1
@@ -179,6 +222,8 @@ def main() -> int:
     url = backend_url if args.no_frontend else f"http://{HOST}:{args.frontend_port}/"
     print(f"\nPrimordial DATA sera aberto em {url}")
     print(f"FastAPI: {backend_url}")
+    if not args.no_java:
+        print(f"Gateway Java: http://{HOST}:{args.java_port}/")
     print("Use Ctrl+C para encerrar.\n")
 
     if not args.no_browser:
@@ -198,7 +243,10 @@ def main() -> int:
     if not args.no_reload:
         run_options["reload_dirs"] = [str(PROJECT_ROOT / "app")]
     frontend_process: subprocess.Popen[bytes] | None = None
+    java_process: subprocess.Popen[bytes] | None = None
     try:
+        if not args.no_java:
+            java_process = _start_java(args.java_port)
         if not args.no_frontend:
             frontend_process = _start_frontend(args.frontend_port)
         uvicorn.run("app.main:app", **run_options)
@@ -206,7 +254,8 @@ def main() -> int:
         print(f"\nNao foi possivel iniciar: {exc}\n", file=sys.stderr)
         return 1
     finally:
-        _stop_frontend(frontend_process)
+        _stop_process(frontend_process)
+        _stop_process(java_process)
     return 0
 
 

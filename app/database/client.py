@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -40,10 +41,59 @@ class ReadOnlyPostgres:
     async def connect(self) -> None:
         if self._pool is not None:
             return
+
+        max_attempts = self._settings.database_connect_max_attempts
+        for attempt in range(1, max_attempts + 1):
+            try:
+                pool = await self._create_verified_pool()
+            except DatabaseSecurityError:
+                # Uma violacao de read-only nao e transitoria e nunca deve ser repetida.
+                raise
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if attempt >= max_attempts:
+                    logger.error(
+                        "database_connection_exhausted attempts=%d error_type=%s",
+                        max_attempts,
+                        type(exc).__name__,
+                    )
+                    raise DatabaseUnavailable(
+                        "Nao foi possivel conectar ao PostgreSQL com seguranca."
+                    ) from None
+
+                delay = min(
+                    self._settings.database_connect_backoff_initial_seconds
+                    * (2 ** (attempt - 1)),
+                    self._settings.database_connect_backoff_max_seconds,
+                )
+                logger.warning(
+                    "database_connection_retry attempt=%d max_attempts=%d "
+                    "next_delay_seconds=%.2f error_type=%s",
+                    attempt,
+                    max_attempts,
+                    delay,
+                    type(exc).__name__,
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            self._pool = pool
+            logger.info("database_connected mode=read_only attempts=%d", attempt)
+            return
+
+    async def _create_verified_pool(self) -> Pool:
         pool: Pool | None = None
+        credentials: dict[str, str] = {}
+        if self._settings.database_username:
+            credentials["user"] = self._settings.database_username
+        if self._settings.database_password:
+            credentials["password"] = self._settings.database_password
+
         try:
             pool = await asyncpg.create_pool(
                 dsn=self._settings.database_url,
+                **credentials,
                 min_size=self._settings.database_min_pool_size,
                 max_size=self._settings.database_max_pool_size,
                 timeout=self._settings.database_connect_timeout_seconds,
@@ -64,23 +114,16 @@ class ReadOnlyPostgres:
                         "O PostgreSQL recusou a sessao obrigatoriamente somente leitura."
                     )
                 await connection.fetchval("SELECT 1")
-        except DatabaseSecurityError:
+        except asyncio.CancelledError:
             if pool is not None:
                 await pool.close()
             raise
-        except Exception as exc:
+        except Exception:
             if pool is not None:
                 await pool.close()
-            logger.error(
-                "database_connection_failed error_type=%s",
-                type(exc).__name__,
-            )
-            raise DatabaseUnavailable(
-                "Nao foi possivel conectar ao PostgreSQL com seguranca."
-            ) from None
+            raise
 
-        self._pool = pool
-        logger.info("database_connected mode=read_only")
+        return pool
 
     async def ping(self) -> bool:
         try:

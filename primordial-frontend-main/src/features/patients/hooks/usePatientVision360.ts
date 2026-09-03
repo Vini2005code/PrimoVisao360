@@ -8,6 +8,7 @@ import {
 } from "../services/patientVision360.service";
 import type {
   PatientVision360Conversation,
+  PatientVision360ChatScope,
   PatientVision360Message,
   PatientVision360SaveRequest,
   PatientVision360SavedItem,
@@ -47,13 +48,18 @@ export function usePatientVision360({
 
   const sendMessage = useMutation({
     mutationKey: ["patient", patientId, "vision-360", "send-message"],
-    mutationFn: (message: string) =>
-      sendPatientVision360Message(patientId, context, message),
-    onSuccess: (response, message) => {
+    mutationFn: ({
+      message,
+      scope,
+    }: {
+      message: string;
+      scope: PatientVision360ChatScope;
+    }) => sendPatientVision360Message(patientId, context, message, scope),
+    onSuccess: (response, variables) => {
       const userMessage: PatientVision360Message = {
         id: `local-${crypto.randomUUID()}`,
         role: "user",
-        content: message.trim(),
+        content: variables.message.trim(),
         created_at: new Date().toISOString(),
       };
 

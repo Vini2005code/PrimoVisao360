@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import re
 from collections.abc import Iterable
 from typing import Any
@@ -89,3 +90,12 @@ def zeroize(buffer: bytearray) -> None:
     if buffer:
         buffer[:] = b"\x00" * len(buffer)
     buffer.clear()
+
+
+def release_ephemeral_memory(*buffers: bytearray) -> None:
+    """Zera buffers e executa uma coleta curta após liberar referências nativas."""
+    for buffer in buffers:
+        zeroize(buffer)
+    # Em CPython, a contagem de referências libera o bloco imediatamente. A
+    # coleta da geração jovem remove ciclos incidentais sem uma pausa global.
+    gc.collect(0)

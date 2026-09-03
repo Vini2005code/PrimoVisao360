@@ -9,6 +9,8 @@ export const patientVision360EntityIdSchema = z
 
 export const patientVision360PatientIdSchema = z.string().uuid();
 
+export const patientVision360ChatScopeSchema = z.enum(["clinic", "patient"]);
+
 export const patientVision360RequestContextSchema = z
   .object({
     clinicId: z.string().uuid(),
@@ -42,7 +44,7 @@ export const patientVision360MessageSchema = z
   .object({
     id: patientVision360EntityIdSchema,
     role: z.enum(["user", "assistant"]),
-    content: z.string().trim().min(1).max(4_000),
+    content: z.string().trim().min(1).max(8_000),
     created_at: z.string().trim().min(1).max(40),
     chart_data: patientVision360ChartSchema.optional(),
   })
@@ -58,7 +60,7 @@ export const patientVision360ConversationSchema = z
 
 export const patientVision360SendMessageRequestSchema = z
   .object({
-    message: z.string().trim().min(1).max(4_000),
+    message: z.string().trim().min(3).max(1_000),
   })
   .strict();
 
@@ -84,7 +86,7 @@ export const patientVision360SaveRequestSchema = z
   .object({
     source_message_id: patientVision360EntityIdSchema,
     title: z.string().trim().min(1).max(200),
-    content: z.string().trim().min(1).max(4_000).optional(),
+    content: z.string().trim().min(1).max(8_000).optional(),
     chart_data: patientVision360ChartSchema.optional(),
   })
   .strict()
@@ -97,7 +99,7 @@ export const patientVision360SavedItemSchema = z
     id: patientVision360EntityIdSchema,
     source_message_id: patientVision360EntityIdSchema,
     title: z.string().trim().min(1).max(200),
-    content: z.string().trim().min(1).max(4_000).optional(),
+    content: z.string().trim().min(1).max(8_000).optional(),
     chart_data: patientVision360ChartSchema.optional(),
     created_at: z.string().trim().min(1).max(40),
   })
@@ -112,6 +114,9 @@ export const patientVision360SavedItemsSchema = z
 
 export type PatientVision360RequestContext = z.infer<
   typeof patientVision360RequestContextSchema
+>;
+export type PatientVision360ChatScope = z.infer<
+  typeof patientVision360ChatScopeSchema
 >;
 export type PatientVision360Chart = z.infer<
   typeof patientVision360ChartSchema

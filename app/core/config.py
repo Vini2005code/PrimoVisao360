@@ -24,7 +24,7 @@ _MODELOS_COM_SAIDA_ESTRITA = frozenset(
 )
 _IDENTIFICADOR_SQL = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 _SSL_MODES_SEGUROS = frozenset({"require", "verify-ca", "verify-full"})
-_HOSTS_LOCAIS = frozenset({"localhost", "127.0.0.1", "::1", "host.docker.internal"})
+_HOSTS_LOCAIS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 def _obrigatoria(nome: str, *, minimo: int = 1) -> str:
@@ -136,18 +136,26 @@ class Settings:
     app_version: str = "1.2.0"
     database_enabled: bool = False
     database_url: str = field(default="", repr=False)
+    database_username: str = field(default="", repr=False)
+    database_password: str = field(default="", repr=False)
     database_min_pool_size: int = 1
     database_max_pool_size: int = 5
     database_connect_timeout_seconds: float = 5.0
+    database_connect_max_attempts: int = 8
+    database_connect_backoff_initial_seconds: float = 0.5
+    database_connect_backoff_max_seconds: float = 8.0
     database_statement_timeout_ms: int = 3_000
     db_schema: str = "ehr_teste"
     voice_enabled: bool = False
+    voice_mock_enabled: bool = False
     voice_stt_model_path: str = ""
     voice_stt_language: str = "pt"
     voice_stt_device: str = "cpu"
     voice_stt_compute_type: str = "int8"
     voice_stt_cpu_threads: int = 2
     voice_stt_max_concurrency: int = 1
+    voice_turn_max_concurrency: int = 1
+    voice_queue_timeout_seconds: float = 0.25
     voice_tts_model_path: str = ""
     voice_tts_config_path: str = ""
     voice_max_audio_bytes: int = 10_485_760
@@ -181,7 +189,29 @@ class Settings:
         if min_pool > max_pool:
             raise RuntimeError("DATABASE_MIN_POOL_SIZE nao pode superar DATABASE_MAX_POOL_SIZE")
 
+        backoff_initial = _decimal(
+            "DATABASE_CONNECT_BACKOFF_INITIAL_SECONDS",
+            0.5,
+            minimo=0.1,
+            maximo=30.0,
+        )
+        backoff_max = _decimal(
+            "DATABASE_CONNECT_BACKOFF_MAX_SECONDS",
+            8.0,
+            minimo=0.1,
+            maximo=60.0,
+        )
+        if backoff_initial > backoff_max:
+            raise RuntimeError(
+                "DATABASE_CONNECT_BACKOFF_INITIAL_SECONDS nao pode superar "
+                "DATABASE_CONNECT_BACKOFF_MAX_SECONDS"
+            )
+
         voice_enabled = _booleano("VOICE_ENABLED", False)
+        voice_mock_enabled = _booleano(
+            "VOICE_MOCK_ENABLED",
+            app_env.casefold() in {"development", "test"},
+        )
         voice_stt_model_path = os.getenv("VOICE_STT_MODEL_PATH", "").strip()
         voice_stt_language = os.getenv("VOICE_STT_LANGUAGE", "pt").strip().casefold()
         if not re.fullmatch(r"[a-z]{2}", voice_stt_language):
@@ -208,7 +238,7 @@ class Settings:
             )
         voice_tts_model_path = os.getenv("VOICE_TTS_MODEL_PATH", "").strip()
         voice_tts_config_path = os.getenv("VOICE_TTS_CONFIG_PATH", "").strip()
-        if voice_enabled:
+        if voice_enabled and not voice_mock_enabled:
             if not voice_stt_model_path:
                 raise RuntimeError(
                     "VOICE_STT_MODEL_PATH e obrigatorio quando VOICE_ENABLED=true"
@@ -239,11 +269,18 @@ class Settings:
             log_level=log_level,
             database_enabled=database_enabled,
             database_url=database_url,
+            database_username=os.getenv("DATABASE_USERNAME", "").strip(),
+            database_password=os.getenv("DATABASE_PASSWORD", "").strip(),
             database_min_pool_size=min_pool,
             database_max_pool_size=max_pool,
             database_connect_timeout_seconds=_decimal(
                 "DATABASE_CONNECT_TIMEOUT_SECONDS", 5.0, minimo=1.0, maximo=30.0
             ),
+            database_connect_max_attempts=_inteiro(
+                "DATABASE_CONNECT_MAX_ATTEMPTS", 8, minimo=1, maximo=20
+            ),
+            database_connect_backoff_initial_seconds=backoff_initial,
+            database_connect_backoff_max_seconds=backoff_max,
             database_statement_timeout_ms=_inteiro(
                 "DATABASE_STATEMENT_TIMEOUT_MS", 3_000, minimo=100, maximo=30_000
             ),
@@ -251,6 +288,7 @@ class Settings:
                 "DB_SCHEMA", "ehr_teste", composto=False
             ),
             voice_enabled=voice_enabled,
+            voice_mock_enabled=voice_mock_enabled,
             voice_stt_model_path=voice_stt_model_path,
             voice_stt_language=voice_stt_language,
             voice_stt_device=voice_stt_device,
@@ -260,6 +298,12 @@ class Settings:
             ),
             voice_stt_max_concurrency=_inteiro(
                 "VOICE_STT_MAX_CONCURRENCY", 1, minimo=1, maximo=4
+            ),
+            voice_turn_max_concurrency=_inteiro(
+                "VOICE_TURN_MAX_CONCURRENCY", 1, minimo=1, maximo=4
+            ),
+            voice_queue_timeout_seconds=_decimal(
+                "VOICE_QUEUE_TIMEOUT_SECONDS", 0.25, minimo=0.05, maximo=5.0
             ),
             voice_tts_model_path=voice_tts_model_path,
             voice_tts_config_path=voice_tts_config_path,
